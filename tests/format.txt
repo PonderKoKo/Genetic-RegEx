@@ -1,0 +1,7 @@
+Number of Words
+word weight
+...
+word weight
+
+Best Known RegEx
+Score of BKR

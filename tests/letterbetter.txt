@@ -1,0 +1,12 @@
+8
+letter 5
+better 3
+batter 2
+falter -3
+walter -5
+alter -2
+setter 2
+getter 3
+
+.*tt.*
+9
