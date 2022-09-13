@@ -9,4 +9,4 @@ setter 2
 getter 3
 
 .*tt.*
-9
+6

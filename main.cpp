@@ -4,25 +4,27 @@
 #include <random>
 #include <cassert>
 
-using std::vector, std::pair, std::string, std::cin, std::cout, std::regex, std::bitset;
+using std::vector, std::pair, std::string;
 
-const unsigned int POPULATION_SIZE {100};
+const unsigned int POPULATION_SIZE {50};
 const unsigned int NUM_GENERATIONS {1000};
 const int BIT_FLIP_PROB {100};
 const int ADD_GROUP_PROB {100};
 const int REM_GROUP_PROB {100};
-const int NO_LIMIT_PROB {50};
+const int LIMIT_FLIP_PROB {50};
 const int DEFAULT_NUM_GROUPS {5};
 
 string BEST_KNOWN_REGEX;
-int BEST_KNOWN_SCORE;
+int BEST_KNOWN_LENGTH;
+int MAXIMUM_SCORE;
+
 vector<pair<string,int>> words;
 
 // TODO Deal with non-latin characters
 // TODO Encourage shorter regular expressions
 
 struct {
-    std::mt19937 gen{std::random_device()()};
+    std::minstd_rand gen{std::random_device()()};
     std::uniform_int_distribution<> distribution{0, 999};
     bool chance (int probability) {
         return distribution(gen) < probability;
@@ -34,9 +36,9 @@ struct {
     }
 } rng;
 
-class RegEx { //TODO Make everything const and calculate stuff at construction time
+class RegEx {
     class char_group {
-        bitset<26> accepted {(1 << 26) - 1};
+        std::bitset<26> accepted {(1 << 26) - 1};
         int min {1}, max {10};
         bool nolimit {false};
         // char_group(bitset<26> a, int mi, int ma) : accepted(a), min(mi), max(ma) {}
@@ -44,12 +46,11 @@ class RegEx { //TODO Make everything const and calculate stuff at construction t
         // char_group() : accepted{static_cast<unsigned long long>(rng.range(0, 1 << 26))} { }
 
         void mutate() {
-            for (int i = 0; i < 25; ++i)
-                if (rng.chance(BIT_FLIP_PROB))
-                    accepted[i] = !accepted[i];
-            // TODO Make not ugly
-            if (rng.chance(NO_LIMIT_PROB))
+            if (rng.chance(BIT_FLIP_PROB))
+                accepted.flip(rng.range(0, 26));
+            if (rng.chance(LIMIT_FLIP_PROB))
                 nolimit = !nolimit;
+            // TODO Make not ugly, allowing staying the same
             min += rng.chance(500) ? 1 : -1;
             max += rng.chance(500) ? 1 : -1;
             min = std::max(min, 0);
@@ -64,12 +65,15 @@ class RegEx { //TODO Make everything const and calculate stuff at construction t
     private:
         void printCharacterClass(std::ostream& stream) const {
             // TODO Add support for ranges of letters
+            // TODO Fix bug where single character classes still somehow print []
             if (accepted.all())
                 stream << '.';
             else {
                 if (accepted.count() > 1)
                     stream << '[';
                 bool inclusion = accepted.count() <= 13;
+                if (!inclusion)
+                    stream << '^';
                 for (int i = 0; i < 25; ++i)
                     if (accepted[i] == inclusion)
                         stream << static_cast<char>('a' + i);
@@ -97,45 +101,6 @@ class RegEx { //TODO Make everything const and calculate stuff at construction t
             }
         }
     };
-public:
-
-    explicit RegEx(vector<char_group>& g) : groups{g} { }
-    RegEx() : groups(DEFAULT_NUM_GROUPS) { }
-
-    static void init_words() {
-        int word_count;
-        cin >> word_count;
-        for (int i = 0; i < word_count; ++i) {
-            string word;
-            int weight;
-            cin >> word >> weight;
-            words.emplace_back(word, weight);
-        }
-    }
-
-    void mutate() {
-        for (auto& group : groups)
-            group.mutate();
-        if (groups.size() > 1 && rng.chance(REM_GROUP_PROB))
-            groups.pop_back();
-        if (rng.chance(ADD_GROUP_PROB))
-            groups.emplace_back();
-    }
-
-    RegEx operator %(const RegEx& other) const {
-        int split = rng.range(1, 1 + static_cast<int>(std::min(this->groups.size(), other.groups.size())));
-        vector<char_group> crossed;
-        crossed.reserve(other.groups.size());
-        for (int i = 0; i < split; i++)
-            crossed.push_back(this->groups[i]);
-        for (int i = split; i < static_cast<int>(other.groups.size()); i++)
-            crossed.push_back(other.groups[i]);
-        return RegEx{crossed};
-    }
-
-    bool operator <(const RegEx& other) const {
-        return std::make_pair(this->matching_score(), -this->length()) < std::make_pair(other.matching_score(), -other.length());
-    }
 
     [[nodiscard]] int matching_score() const {
         int fitness = 0;
@@ -155,6 +120,38 @@ public:
         return static_cast<int>(this->to_string().size());
     }
 
+    vector<char_group> groups; // const in spirit, but ... copy-assignment
+    explicit RegEx(vector<char_group>& g) : groups{g}, matching_score_(matching_score()), length_(length()) { }
+public:
+    int matching_score_, length_;
+    RegEx() : groups(DEFAULT_NUM_GROUPS), matching_score_(matching_score()), length_(length()) {} //TODO Fix ugly repetition
+
+    [[nodiscard]] RegEx mutate() const {
+        vector<char_group> mutated(groups);
+        for (auto& group : mutated)
+            group.mutate();
+        if (mutated.size() > 1 && rng.chance(REM_GROUP_PROB))
+            mutated.erase(mutated.begin() + rng.range(0, static_cast<int>(mutated.size())));
+        if (rng.chance(ADD_GROUP_PROB))
+            mutated.emplace_back();
+        return RegEx{mutated};
+    }
+
+    RegEx operator %(const RegEx& other) const {
+        int split = rng.range(1, 1 + static_cast<int>(std::min(this->groups.size(), other.groups.size())));
+        vector<char_group> crossed;
+        crossed.reserve(other.groups.size());
+        for (int i = 0; i < split; i++)
+            crossed.push_back(this->groups[i]);
+        for (int i = split; i < static_cast<int>(other.groups.size()); i++)
+            crossed.push_back(other.groups[i]);
+        return RegEx{crossed};
+    }
+
+    bool operator <(const RegEx& other) const {
+        return std::make_pair(this->matching_score_, -this->length_) < std::make_pair(other.matching_score_, -other.length_);
+    }
+
     [[nodiscard]] string to_string() const {
         std::stringstream out;
         out << *this;
@@ -167,11 +164,9 @@ public:
         return stream;
     }
 
-    [[nodiscard]] regex to_regex() const {
-        return regex{this->to_string(), std::regex_constants::optimize};
+    [[nodiscard]] std::regex to_regex() const {
+        return std::regex{this->to_string(), std::regex_constants::optimize};
     }
-
-    vector<char_group> groups;
 };
 
 using Population = std::array<RegEx, POPULATION_SIZE>;
@@ -182,13 +177,31 @@ void next_generation(Population& pop, RegEx& best_achieved) {
     for (int weak = 0, strong = POPULATION_SIZE - 1; weak < strong; weak++, strong--)
         pop[weak] = pop[strong] % pop[strong - 1];
     for (auto& ind : pop)
-        ind.mutate();
+        ind = ind.mutate();
     pop[0] = best_achieved; // Hacky way to keep the best regex as is.
 }
 
 void read_testcase() {
-    RegEx::init_words();
-    cin >> BEST_KNOWN_REGEX >> BEST_KNOWN_SCORE;
+    int word_count;
+    std::cin >> word_count;
+    MAXIMUM_SCORE = 0;
+    for (int i = 0; i < word_count; ++i) {
+        string word;
+        int weight;
+        std::cin >> word >> weight;
+        words.emplace_back(word, weight);
+        if (weight > 0)
+            MAXIMUM_SCORE += weight;
+    }
+    std::cin >> BEST_KNOWN_REGEX >> BEST_KNOWN_LENGTH;
+}
+
+void interactive_test(std::istream& in, std::ostream& out, const std::regex& r) {
+    string query;
+    do {
+        in >> query;
+        out << std::regex_match(query, r);
+    } while (!query.empty());
 }
 
 int main() {
@@ -196,8 +209,8 @@ int main() {
     read_testcase();
     Population pop;
     RegEx best_achieved;
-    for (unsigned int i = 0; i < NUM_GENERATIONS; i++) {
+    for (unsigned int i = 0; i < NUM_GENERATIONS; i++)
         next_generation(pop, best_achieved);
-        cout << best_achieved << " -- " << best_achieved.matching_score() << std::endl;
-    }
+    std::cout << best_achieved << " # " << best_achieved.matching_score_ << '/' << MAXIMUM_SCORE << " | " << best_achieved.length_ << '/' << BEST_KNOWN_LENGTH << std::endl;
+    interactive_test(std::cin, std::cout, best_achieved.to_regex());
 }

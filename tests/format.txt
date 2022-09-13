@@ -4,4 +4,4 @@ word weight
 word weight
 
 Best Known RegEx
-Score of BKR
+Length of BKR

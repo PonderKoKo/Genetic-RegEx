@@ -1,0 +1,14 @@
+10
+couch 2
+chair 3
+tv 1
+painting 2
+cushion 2
+fireplace 2
+table 1
+speakers 1
+plant 4
+carpet 2
+
+.*
+2
